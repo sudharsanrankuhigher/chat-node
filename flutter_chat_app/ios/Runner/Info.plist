@@ -52,5 +52,9 @@
 		<key>NSAllowsArbitraryLoadsInWebContent</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>This app needs camera access for video calls.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app needs microphone access for audio and video calls.</string>
 </dict>
 </plist>

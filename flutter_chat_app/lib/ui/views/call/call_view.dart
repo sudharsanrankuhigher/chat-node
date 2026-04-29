@@ -2,177 +2,76 @@ import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:stacked/stacked.dart';
 
-import '../../../models/call_state.dart';
-import '../../../viewmodels/call_viewmodel.dart';
+import '../../../core/models/call_state.dart';
+import '../../../core/models/user_profile.dart';
+import 'call_viewmodel.dart';
 
-class CallView extends StatefulWidget {
+class CallView extends StatelessWidget {
   const CallView({
     super.key,
-    required this.currentUserId,
-    required this.peerUserId,
+    required this.currentUser,
+    required this.peerUser,
     required this.isIncoming,
+    required this.isVideoCall,
     this.remoteOffer,
     this.autoStart = false,
   });
 
-  final String currentUserId;
-  final String peerUserId;
+  final UserProfile currentUser;
+  final UserProfile peerUser;
   final bool isIncoming;
-  final Map<String, dynamic>? remoteOffer;
+  final bool isVideoCall;
   final bool autoStart;
+  final Map<String, dynamic>? remoteOffer;
 
-  @override
-  State<CallView> createState() => _CallViewState();
-}
-
-class _CallViewState extends State<CallView> {
   @override
   Widget build(BuildContext context) {
     return ViewModelBuilder<CallViewModel>.reactive(
       viewModelBuilder: () => CallViewModel(
-        currentUserId: widget.currentUserId,
-        peerUserId: widget.peerUserId,
-        isIncoming: widget.isIncoming,
-        remoteOffer: widget.remoteOffer,
-        autoStart: widget.autoStart,
+        currentUser: currentUser,
+        peerUser: peerUser,
+        isIncoming: isIncoming,
+        isVideoCall: isVideoCall,
+        remoteOffer: remoteOffer,
+        autoStart: autoStart,
       ),
       onViewModelReady: (CallViewModel viewModel) => viewModel.initialise(),
       builder: (BuildContext context, CallViewModel viewModel, Widget? child) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (viewModel.shouldClose && mounted) {
-            Navigator.of(context).maybePop();
+          if (viewModel.shouldClose && Navigator.of(context).canPop()) {
+            Navigator.of(context).pop();
           }
         });
 
-        return WillPopScope(
-          onWillPop: () async {
-            if (viewModel.callState != CallState.idle) {
-              await viewModel.endCall();
-            }
-            return true;
-          },
-          child: Scaffold(
-            appBar: AppBar(
-              title: Text('Call with ${widget.peerUserId}'),
-            ),
-            body: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: <Widget>[
-                    Expanded(
-                      child: viewModel.renderersReady
-                          ? Stack(
-                              children: <Widget>[
-                                Positioned.fill(
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color: Colors.black,
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    clipBehavior: Clip.antiAlias,
-                                    child: RTCVideoView(
-                                      viewModel.remoteRenderer,
-                                      objectFit: RTCVideoViewObjectFit
-                                          .RTCVideoViewObjectFitCover,
-                                    ),
-                                  ),
-                                ),
-                                Positioned(
-                                  right: 16,
-                                  top: 16,
-                                  width: 120,
-                                  height: 180,
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color: Colors.black87,
-                                      borderRadius: BorderRadius.circular(16),
-                                    ),
-                                    clipBehavior: Clip.antiAlias,
-                                    child: RTCVideoView(
-                                      viewModel.localRenderer,
-                                      mirror: true,
-                                      objectFit: RTCVideoViewObjectFit
-                                          .RTCVideoViewObjectFitCover,
-                                    ),
-                                  ),
-                                ),
-                                Positioned(
-                                  left: 16,
-                                  right: 16,
-                                  bottom: 16,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 10,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black54,
-                                      borderRadius: BorderRadius.circular(14),
-                                    ),
-                                    child: Text(
-                                      _statusText(viewModel.callState),
-                                      style:
-                                          const TextStyle(color: Colors.white),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            )
-                          : const Center(child: CircularProgressIndicator()),
-                    ),
-                    const SizedBox(height: 20),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
-                      alignment: WrapAlignment.center,
-                      children: <Widget>[
-                        FilledButton.icon(
-                          onPressed: !widget.isIncoming && !widget.autoStart
-                              ? viewModel.startCall
-                              : null,
-                          icon: const Icon(Icons.call),
-                          label: const Text('Call'),
-                        ),
-                        FilledButton.icon(
-                          onPressed: widget.isIncoming &&
-                                  viewModel.callState == CallState.ringing
-                              ? viewModel.acceptCall
-                              : null,
-                          icon: const Icon(Icons.call_received),
-                          label: const Text('Accept'),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: widget.isIncoming &&
-                                  viewModel.callState == CallState.ringing
-                              ? viewModel.rejectCall
-                              : null,
-                          icon: const Icon(Icons.call_end),
-                          label: const Text('Reject'),
-                        ),
-                        FilledButton.tonalIcon(
-                          onPressed: viewModel.callState != CallState.idle
-                              ? viewModel.endCall
-                              : null,
-                          icon: const Icon(Icons.call_end),
-                          label: const Text('End call'),
-                        ),
-                        FilledButton.tonalIcon(
-                          onPressed: viewModel.toggleMute,
-                          icon: Icon(
-                            viewModel.isMuted ? Icons.mic_off : Icons.mic,
-                          ),
-                          label: Text(viewModel.isMuted ? 'Unmute' : 'Mute'),
-                        ),
-                        FilledButton.tonalIcon(
-                          onPressed: viewModel.switchCamera,
-                          icon: const Icon(Icons.cameraswitch),
-                          label: const Text('Switch camera'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+        return Scaffold(
+          appBar: AppBar(
+            title: Text('${isVideoCall ? 'Video' : 'Audio'} call'),
+          ),
+          body: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: <Widget>[
+                  Text(
+                    peerUser.displayName,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(_labelForState(viewModel.callState)),
+                  const SizedBox(height: 24),
+                  Expanded(
+                    child: isVideoCall
+                        ? _VideoLayout(viewModel: viewModel, peerUser: peerUser)
+                        : _AudioLayout(peerUser: peerUser),
+                  ),
+                  const SizedBox(height: 24),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    alignment: WrapAlignment.center,
+                    children: _buildControls(viewModel),
+                  ),
+                ],
               ),
             ),
           ),
@@ -181,18 +80,104 @@ class _CallViewState extends State<CallView> {
     );
   }
 
-  String _statusText(CallState state) {
+  List<Widget> _buildControls(CallViewModel viewModel) {
+    if (isIncoming && viewModel.callState == CallState.ringing) {
+      return <Widget>[
+        FilledButton(
+          onPressed: viewModel.acceptCall,
+          child: const Text('Accept'),
+        ),
+        OutlinedButton(
+          onPressed: viewModel.rejectCall,
+          child: const Text('Reject'),
+        ),
+      ];
+    }
+
+    return <Widget>[
+      FilledButton.tonal(
+        onPressed: viewModel.toggleMute,
+        child: Text(viewModel.isMuted ? 'Unmute' : 'Mute'),
+      ),
+      if (isVideoCall)
+        FilledButton.tonal(
+          onPressed: viewModel.switchCamera,
+          child: const Text('Switch camera'),
+        ),
+      FilledButton(
+        onPressed: viewModel.endCall,
+        child: const Text('End call'),
+      ),
+    ];
+  }
+
+  String _labelForState(CallState state) {
     switch (state) {
       case CallState.idle:
-        return 'Ready';
+        return isIncoming ? 'Incoming call' : 'Preparing call';
       case CallState.ringing:
-        return 'Incoming call';
+        return 'Ringing';
       case CallState.connecting:
-        return 'Connecting...';
+        return 'Connecting';
       case CallState.connected:
         return 'Connected';
       case CallState.ended:
         return 'Call ended';
     }
+  }
+}
+
+class _VideoLayout extends StatelessWidget {
+  const _VideoLayout({
+    required this.viewModel,
+    required this.peerUser,
+  });
+
+  final CallViewModel viewModel;
+  final UserProfile peerUser;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!viewModel.renderersReady) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return Column(
+      children: <Widget>[
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: RTCVideoView(viewModel.remoteRenderer, mirror: false),
+          ),
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          height: 180,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: RTCVideoView(viewModel.localRenderer, mirror: true),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AudioLayout extends StatelessWidget {
+  const _AudioLayout({required this.peerUser});
+
+  final UserProfile peerUser;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: CircleAvatar(
+        radius: 64,
+        child: Text(
+          peerUser.displayName.isEmpty ? '?' : peerUser.displayName[0].toUpperCase(),
+          style: Theme.of(context).textTheme.displaySmall,
+        ),
+      ),
+    );
   }
 }

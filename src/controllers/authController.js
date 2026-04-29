@@ -3,26 +3,48 @@ const generateToken = require("../utils/generateToken");
 const ApiError = require("../utils/apiError");
 const { OTP } = require("../config/constants");
 
-async function sendOtp(req, res) {
-  const { mobile, name } = req.body;
+function normalizePhone(payload) {
+  if (!payload) return "";
 
-  if (!mobile) {
-    throw new ApiError(422, "Mobile is required.");
+  const phone = payload.phone ?? payload.mobile ?? "";
+
+  return typeof phone === "string"
+    ? phone.trim()
+    : String(phone).trim();
+}
+
+function formatAuthResponse(user, overrides = {}) {
+  return {
+    token: overrides.token || generateToken(user._id.toString()),
+    isNewUser: !user.isRegistered,
+    user: {
+      _id: user._id,
+      id: user._id,
+      name: user.name,
+      phone: user.mobile,
+      mobile: user.mobile,
+      walletBalance: user.walletBalance,
+      isRegistered: user.isRegistered
+    }
+  };
+}
+
+async function sendOtp(req, res) {
+  const phone = normalizePhone(req.body);
+
+  if (!phone) {
+    throw new ApiError(422, "Phone is required.");
   }
 
-  let user = await User.findOne({ mobile });
+  let user = await User.findOne({ mobile: phone });
 
   if (!user) {
     user = await User.create({
-      mobile,
-      name: name || `User ${mobile.slice(-4)}`,
+      mobile: phone,
       otp: OTP
     });
   } else {
     user.otp = OTP;
-    if (name) {
-      user.name = name;
-    }
     await user.save();
   }
 
@@ -31,19 +53,20 @@ async function sendOtp(req, res) {
     message: "OTP sent successfully.",
     data: {
       otp: OTP,
-      user
+      user: formatAuthResponse(user, { token: "" }).user
     }
   });
 }
 
 async function verifyOtp(req, res) {
-  const { mobile, otp } = req.body;
+  const phone = normalizePhone(req.body);
+  const { otp } = req.body;
 
-  if (!mobile || !otp) {
-    throw new ApiError(422, "Mobile and OTP are required.");
+  if (!phone || !otp) {
+    throw new ApiError(422, "Phone and OTP are required.");
   }
 
-  const user = await User.findOne({ mobile });
+  const user = await User.findOne({ mobile: phone });
 
   if (!user) {
     throw new ApiError(404, "User not found.");
@@ -57,19 +80,40 @@ async function verifyOtp(req, res) {
   user.otpVerifiedAt = new Date();
   await user.save();
 
-  const token = generateToken(user._id.toString());
-
   res.json({
     success: true,
     message: "OTP verified successfully.",
-    data: {
-      token,
-      user
-    }
+    data: formatAuthResponse(user)
+  });
+}
+
+async function register(req, res) {
+  const phone = normalizePhone(req.body);
+  const { name } = req.body;
+
+  if (!phone || !name) {
+    throw new ApiError(422, "Phone and name are required.");
+  }
+
+  const user = await User.findOne({ mobile: phone });
+
+  if (!user) {
+    throw new ApiError(404, "User not found.");
+  }
+
+  user.name = String(name).trim();
+  user.isRegistered = true;
+  await user.save();
+
+  res.json({
+    success: true,
+    message: "Registration completed successfully.",
+    data: formatAuthResponse(user)
   });
 }
 
 module.exports = {
   sendOtp,
-  verifyOtp
+  verifyOtp,
+  register
 };

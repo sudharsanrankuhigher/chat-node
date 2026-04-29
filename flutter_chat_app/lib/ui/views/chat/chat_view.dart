@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 
-import '../../../models/call_signal.dart';
-import '../../../models/chat_message.dart';
-import '../../../viewmodels/chat_viewmodel.dart';
-import '../../widgets/incoming_call_dialog.dart';
+import '../../../core/models/user_profile.dart';
 import '../../widgets/message_bubble.dart';
 import '../call/call_view.dart';
+import 'chat_viewmodel.dart';
 
 class ChatView extends StatefulWidget {
-  const ChatView({super.key});
+  const ChatView({
+    super.key,
+    required this.currentUser,
+    required this.peerUser,
+  });
+
+  final UserProfile currentUser;
+  final UserProfile peerUser;
 
   @override
   State<ChatView> createState() => _ChatViewState();
@@ -17,7 +22,6 @@ class ChatView extends StatefulWidget {
 
 class _ChatViewState extends State<ChatView> {
   final ScrollController _scrollController = ScrollController();
-  bool _isShowingIncomingDialog = false;
 
   @override
   void dispose() {
@@ -28,125 +32,67 @@ class _ChatViewState extends State<ChatView> {
   @override
   Widget build(BuildContext context) {
     return ViewModelBuilder<ChatViewModel>.reactive(
-      viewModelBuilder: ChatViewModel.new,
+      viewModelBuilder: () => ChatViewModel(peerUser: widget.peerUser),
       onViewModelReady: (ChatViewModel viewModel) => viewModel.initialise(),
       builder: (BuildContext context, ChatViewModel viewModel, Widget? child) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _scrollToBottom();
-          _showIncomingCallDialogIfNeeded(viewModel);
-        });
-
-        final List<ChatMessage> messages = viewModel.conversationMessages;
+        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
 
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Stacked Chat'),
-            actions: <Widget>[
-              Padding(
-                padding: const EdgeInsets.only(right: 16),
-                child: Row(
-                  children: <Widget>[
-                    Icon(
-                      Icons.circle,
-                      size: 12,
-                      color: viewModel.isConnected ? Colors.green : Colors.red,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(viewModel.isConnected ? 'Connected' : 'Offline'),
-                  ],
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(widget.peerUser.displayName),
+                Text(
+                  viewModel.isPeerOnline ? 'Online' : 'Offline',
+                  style: Theme.of(context).textTheme.labelMedium,
                 ),
+              ],
+            ),
+            actions: <Widget>[
+              IconButton(
+                onPressed: () => _openCall(context, isVideoCall: false),
+                icon: const Icon(Icons.call),
+              ),
+              IconButton(
+                onPressed: () => _openCall(context, isVideoCall: true),
+                icon: const Icon(Icons.videocam),
               ),
             ],
           ),
-          body: SafeArea(
-            child: Column(
-              children: <Widget>[
+          body: Column(
+            children: <Widget>[
+              if (viewModel.errorMessage != null)
                 Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    children: <Widget>[
-                      TextField(
-                        controller: viewModel.currentUserController,
-                        decoration: const InputDecoration(
-                          labelText: 'Your user ID',
-                          border: OutlineInputBorder(),
-                        ),
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  child: Text(
+                    viewModel.errorMessage!,
+                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  ),
+                ),
+              Expanded(
+                child: viewModel.isBusy
+                    ? const Center(child: CircularProgressIndicator())
+                    : ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.all(16),
+                        itemCount: viewModel.messages.length,
+                        itemBuilder: (BuildContext context, int index) {
+                          final message = viewModel.messages[index];
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: MessageBubble(
+                              message: message,
+                              isMine: message.senderId == widget.currentUser.id,
+                            ),
+                          );
+                        },
                       ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: <Widget>[
-                          Expanded(
-                            child: TextField(
-                              controller: viewModel.peerUserController,
-                              decoration: const InputDecoration(
-                                labelText: 'Chat / call user ID',
-                                border: OutlineInputBorder(),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          FilledButton(
-                            onPressed:
-                                viewModel.isConnected ? viewModel.disconnect : viewModel.connect,
-                            child: Text(viewModel.isConnected ? 'Disconnect' : 'Connect'),
-                          ),
-                        ],
-                      ),
-                      if (viewModel.errorText != null) ...<Widget>[
-                        const SizedBox(height: 8),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            viewModel.errorText!,
-                            style: TextStyle(
-                              color: Theme.of(context).colorScheme.error,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                Container(
-                  height: 64,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  alignment: Alignment.centerLeft,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    children: viewModel.onlineUsers
-                        .where((String userId) => userId != viewModel.currentUserId)
-                        .map(
-                          (String userId) => Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: ChoiceChip(
-                              label: Text(userId),
-                              selected: userId == viewModel.selectedPeerUserId,
-                              onSelected: (_) => viewModel.selectPeer(userId),
-                            ),
-                          ),
-                        )
-                        .toList(),
-                  ),
-                ),
-                Expanded(
-                  child: Container(
-                    color: const Color(0xFFF2F7F5),
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: ListView.builder(
-                      controller: _scrollController,
-                      itemCount: messages.length,
-                      itemBuilder: (BuildContext context, int index) {
-                        final ChatMessage message = messages[index];
-                        return MessageBubble(
-                          message: message,
-                          isMine: message.senderId == viewModel.currentUserId,
-                        );
-                      },
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(12),
+              ),
+              SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                   child: Row(
                     children: <Widget>[
                       Expanded(
@@ -154,44 +100,40 @@ class _ChatViewState extends State<ChatView> {
                           controller: viewModel.messageController,
                           minLines: 1,
                           maxLines: 4,
+                          onChanged: (_) => viewModel.onComposerChanged(),
                           decoration: const InputDecoration(
                             hintText: 'Type a message',
                             border: OutlineInputBorder(),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 12),
                       IconButton.filled(
-                        onPressed: viewModel.selectedPeerUserId.isEmpty ||
-                                viewModel.currentUserId.isEmpty
-                            ? null
-                            : () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) => CallView(
-                                      currentUserId: viewModel.currentUserId,
-                                      peerUserId: viewModel.selectedPeerUserId,
-                                      isIncoming: false,
-                                      autoStart: true,
-                                    ),
-                                  ),
-                                );
-                              },
-                        icon: const Icon(Icons.video_call),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filled(
-                        onPressed: viewModel.sendMessage,
+                        onPressed: viewModel.canSend ? viewModel.sendMessage : null,
                         icon: const Icon(Icons.send),
                       ),
                     ],
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         );
       },
+    );
+  }
+
+  void _openCall(BuildContext context, {required bool isVideoCall}) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CallView(
+          currentUser: widget.currentUser,
+          peerUser: widget.peerUser,
+          isIncoming: false,
+          isVideoCall: isVideoCall,
+          autoStart: true,
+        ),
+      ),
     );
   }
 
@@ -202,52 +144,8 @@ class _ChatViewState extends State<ChatView> {
 
     _scrollController.animateTo(
       _scrollController.position.maxScrollExtent,
-      duration: const Duration(milliseconds: 250),
+      duration: const Duration(milliseconds: 200),
       curve: Curves.easeOut,
     );
-  }
-
-  void _showIncomingCallDialogIfNeeded(ChatViewModel viewModel) {
-    final CallSignal? signal = viewModel.pendingIncomingCall;
-    if (signal == null || _isShowingIncomingDialog || !mounted) {
-      return;
-    }
-
-    _isShowingIncomingDialog = true;
-
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext dialogContext) {
-        return IncomingCallDialog(
-          callerId: signal.from,
-          onReject: () async {
-            Navigator.of(dialogContext).pop();
-            await viewModel.rejectIncomingCall();
-          },
-          onAccept: () {
-            final CallSignal? accepted = viewModel.takeIncomingCall();
-            Navigator.of(dialogContext).pop();
-
-            if (accepted == null) {
-              return;
-            }
-
-            Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => CallView(
-                  currentUserId: viewModel.currentUserId,
-                  peerUserId: accepted.from,
-                  isIncoming: true,
-                  remoteOffer: accepted.description,
-                ),
-              ),
-            );
-          },
-        );
-      },
-    ).whenComplete(() {
-      _isShowingIncomingDialog = false;
-    });
   }
 }

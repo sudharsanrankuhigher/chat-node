@@ -5,6 +5,7 @@ const connectionController = require("../controllers/connectionController");
 router.post("/send-request", connectionController.sendRequest);
 router.get("/pending", connectionController.getPendingRequests);
 router.post("/respond", connectionController.respondRequest);
+router.post("/cancel", connectionController.cancelRequest);
 router.get("/", connectionController.getConnections);
 router.get("/invited", connectionController.getInvitedConnections);
 

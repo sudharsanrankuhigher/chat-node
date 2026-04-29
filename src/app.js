@@ -9,12 +9,10 @@ const errorHandler = require("./middlewares/errorHandler");
 
 const app = express();
 
-app.use(
-  cors({
-    origin: process.env.CLIENT_URL || "*",
-    credentials: true
-  })
-);
+app.use(cors({
+  origin: "*",
+  credentials: true
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan("dev"));
@@ -24,6 +22,7 @@ app.get("/health", (req, res) => {
 });
 
 app.use("/api", routes);
+app.use("/", routes);
 app.use(errorHandler);
 
 module.exports = app;

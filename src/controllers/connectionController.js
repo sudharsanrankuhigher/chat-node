@@ -121,10 +121,35 @@ async function getInvitedConnections(req, res) {
   });
 }
 
+async function cancelRequest(req, res) {
+  const { connectionId } = req.body;
+
+  if (!connectionId) {
+    throw new ApiError(422, "connectionId is required.");
+  }
+
+  const connection = await Connection.findOneAndDelete({
+    _id: connectionId,
+    sender: req.user._id,
+    status: CONNECTION_STATUS.PENDING
+  }).populate("receiver", "name mobile walletBalance createdAt updatedAt");
+
+  if (!connection) {
+    throw new ApiError(404, "Pending invited request not found.");
+  }
+
+  res.json({
+    success: true,
+    message: "Connection request cancelled.",
+    data: connection
+  });
+}
+
 module.exports = {
   sendRequest,
   respondRequest,
   getPendingRequests,
   getConnections,
-  getInvitedConnections
+  getInvitedConnections,
+  cancelRequest
 };

@@ -17,6 +17,7 @@ module.exports = {
   CALL_STATUS: {
     RINGING: "ringing",
     ACCEPTED: "accepted",
+    REJECTED: "rejected",
     ENDED: "ended"
   }
 };

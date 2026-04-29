@@ -65,6 +65,33 @@ async function acceptCall(req, res) {
   });
 }
 
+async function rejectCall(req, res) {
+  const { callId } = req.body;
+
+  const call = await Call.findOne({
+    _id: callId,
+    receiver: req.user._id,
+    status: CALL_STATUS.RINGING
+  }).populate("caller receiver", "name mobile");
+
+  if (!call) {
+    throw new ApiError(404, "Active incoming call not found.");
+  }
+
+  call.status = CALL_STATUS.REJECTED;
+  await call.save();
+
+  const io = req.app.get("io");
+  io.to(`user:${call.caller._id}`).emit("call:rejected", call);
+  io.to(`user:${call.receiver._id}`).emit("call:rejected", call);
+
+  res.json({
+    success: true,
+    message: "Call rejected successfully.",
+    data: call
+  });
+}
+
 async function endCall(req, res) {
   const { callId } = req.body;
 
@@ -95,5 +122,6 @@ async function endCall(req, res) {
 module.exports = {
   startCall,
   acceptCall,
+  rejectCall,
   endCall
 };

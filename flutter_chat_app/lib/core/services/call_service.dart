@@ -19,10 +19,12 @@ class CallService with ListenableServiceMixin {
   String? _currentUserId;
   String? _peerUserId;
   bool _isMuted = false;
+  bool _isVideoCall = true;
   bool _renderersReady = false;
 
   CallState get callState => _callState;
   bool get isMuted => _isMuted;
+  bool get isVideoCall => _isVideoCall;
   bool get renderersReady => _renderersReady;
 
   Future<void> initializeRenderers() async {
@@ -38,14 +40,16 @@ class CallService with ListenableServiceMixin {
   Future<void> prepareForCall({
     required String currentUserId,
     required String peerUserId,
+    required bool videoEnabled,
   }) async {
     _currentUserId = currentUserId;
     _peerUserId = peerUserId;
+    _isVideoCall = videoEnabled;
 
     await initializeRenderers();
     await _disposePeerConnection();
     await _disposeStreams();
-    await _ensureLocalMedia();
+    await _ensureLocalMedia(videoEnabled: videoEnabled);
     await _createPeerConnection();
 
     _callState = CallState.idle;
@@ -64,7 +68,7 @@ class CallService with ListenableServiceMixin {
     final RTCSessionDescription offer = await _peerConnection!.createOffer(
       <String, dynamic>{
         'offerToReceiveAudio': 1,
-        'offerToReceiveVideo': 1,
+        'offerToReceiveVideo': _isVideoCall ? 1 : 0,
       },
     );
     await _peerConnection!.setLocalDescription(offer);
@@ -93,7 +97,7 @@ class CallService with ListenableServiceMixin {
     final RTCSessionDescription answer = await _peerConnection!.createAnswer(
       <String, dynamic>{
         'offerToReceiveAudio': 1,
-        'offerToReceiveVideo': 1,
+        'offerToReceiveVideo': _isVideoCall ? 1 : 0,
       },
     );
     await _peerConnection!.setLocalDescription(answer);
@@ -155,6 +159,10 @@ class CallService with ListenableServiceMixin {
   }
 
   Future<void> switchCamera() async {
+    if (!_isVideoCall) {
+      return;
+    }
+
     final List<MediaStreamTrack> videoTracks =
         _localStream?.getVideoTracks() ?? <MediaStreamTrack>[];
     if (videoTracks.isEmpty) {
@@ -173,11 +181,11 @@ class CallService with ListenableServiceMixin {
     notifyListeners();
   }
 
-  Future<void> _ensureLocalMedia() async {
+  Future<void> _ensureLocalMedia({required bool videoEnabled}) async {
     _localStream = await navigator.mediaDevices.getUserMedia(
       <String, dynamic>{
         'audio': true,
-        'video': <String, dynamic>{'facingMode': 'user'},
+        'video': videoEnabled ? <String, dynamic>{'facingMode': 'user'} : false,
       },
     );
 
@@ -213,6 +221,13 @@ class CallService with ListenableServiceMixin {
           'sdpMLineIndex': candidate.sdpMLineIndex,
         },
       );
+    };
+
+    _peerConnection!.onConnectionState = (RTCPeerConnectionState state) {
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+        _callState = CallState.connected;
+        notifyListeners();
+      }
     };
 
     _peerConnection!.onTrack = (RTCTrackEvent event) {

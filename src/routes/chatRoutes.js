@@ -2,7 +2,8 @@ const router = require("express").Router();
 
 const chatController = require("../controllers/chatController");
 
-router.post("/send-message", chatController.sendMessage);
-router.get("/history/:userId", chatController.getChatHistory);
+router.get("/contacts", chatController.getContacts);
+router.post("/send", chatController.sendMessage);
+router.get("/messages/:chatId", chatController.getMessages);
 
 module.exports = router;

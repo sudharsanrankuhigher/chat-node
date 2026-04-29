@@ -6,9 +6,11 @@ const chatRoutes = require("./chatRoutes");
 const callRoutes = require("./callRoutes");
 const walletRoutes = require("./walletRoutes");
 const profileRoutes = require("./profileRoutes");
+const userRoutes = require("./userRoutes");
 const authMiddleware = require("../middlewares/authMiddleware");
 
 router.use("/auth", authRoutes);
+router.use("/users", authMiddleware, userRoutes);
 router.use("/connections", authMiddleware, connectionRoutes);
 router.use("/chat", authMiddleware, chatRoutes);
 router.use("/calls", authMiddleware, callRoutes);

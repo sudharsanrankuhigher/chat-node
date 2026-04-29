@@ -7,12 +7,27 @@ const messageSchema = new mongoose.Schema(
     sender: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true
+      default: null
     },
     receiver: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true
+      default: null
+    },
+    senderUserId: {
+      type: String,
+      default: null,
+      trim: true
+    },
+    receiverUserId: {
+      type: String,
+      default: null,
+      trim: true
+    },
+    chatId: {
+      type: String,
+      required: true,
+      trim: true
     },
     message: {
       type: String,
@@ -36,5 +51,7 @@ const messageSchema = new mongoose.Schema(
 );
 
 messageSchema.index({ sender: 1, receiver: 1, createdAt: 1 });
+messageSchema.index({ senderUserId: 1, receiverUserId: 1, createdAt: 1 });
+messageSchema.index({ chatId: 1, createdAt: 1 });
 
 module.exports = mongoose.model("Message", messageSchema);

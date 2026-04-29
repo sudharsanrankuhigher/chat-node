@@ -2,9 +2,19 @@ require("dotenv").config();
 
 const http = require("http");
 const socketIo = require("socket.io");
+const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 
 const app = require("./app");
 const connectDB = require("./config/db");
+const {
+  createSocketMessage,
+  toSocketMessagePayload
+} = require("./services/socketMessageService");
+const User = require("./models/User");
+const Call = require("./models/Call");
+const { buildChatId } = require("./controllers/chatController");
+const { CALL_STATUS } = require("./config/constants");
 
 const PORT = process.env.PORT || 5000;
 const users = new Map();
@@ -65,33 +75,61 @@ async function bootstrap() {
     }
   });
 
+  io.use(async (socket, next) => {
+    try {
+      const token = socket.handshake.auth?.token;
+
+      if (token) {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findById(decoded.userId);
+
+        if (!user) {
+          return next(new Error("Invalid token."));
+        }
+
+        socket.user = user;
+        registerUser(socket, io, user._id.toString());
+        return next();
+      }
+
+      const initialUserId =
+        socket.handshake.auth?.userId || socket.handshake.query?.userId;
+
+      if (initialUserId) {
+        registerUser(socket, io, initialUserId);
+      }
+
+      next();
+    } catch (error) {
+      next(error);
+    }
+  });
+
   io.on("connection", (socket) => {
     console.log(`Socket connected: ${socket.id}`);
 
-    const initialUserId =
-      socket.handshake.auth?.userId ||
-      socket.handshake.query?.userId;
-
-    if (initialUserId) {
-      registerUser(socket, io, initialUserId);
-    } else {
-      emitOnlineUsers(io);
-    }
+    emitOnlineUsers(io);
 
     socket.on("register_user", (userId) => {
       registerUser(socket, io, userId);
     });
 
-    socket.on("send_message", ({ senderId, receiverId, message } = {}) => {
+    socket.on("send_message", async ({ senderId, receiverId, message } = {}) => {
       if (!senderId || !receiverId || typeof message === "undefined") {
         return;
       }
 
-      const payload = {
+      const createdMessage = await createSocketMessage({
         senderId,
         receiverId,
         message
-      };
+      });
+
+      if (!createdMessage) {
+        return;
+      }
+
+      const payload = toSocketMessagePayload(createdMessage);
 
       const receiverSocketId = getUserSocketId(receiverId);
 
@@ -100,29 +138,50 @@ async function bootstrap() {
       }
 
       io.to(`user:${receiverId}`).emit("receive_message", payload);
+      io.to(`user:${senderId}`).emit("message_sent", payload);
     });
 
-    socket.on("call_user", ({ from, to, offer } = {}) => {
+    socket.on("callUser", async ({ from, to, offer, callType = "audio" } = {}) => {
       if (!from || !to || !offer) {
         return;
       }
 
-      const payload = { from, to, offer };
+      const call = await Call.create({
+        caller: new mongoose.Types.ObjectId(String(from)),
+        receiver: new mongoose.Types.ObjectId(String(to)),
+        type: callType,
+        status: CALL_STATUS.RINGING
+      });
+
+      const payload = {
+        callId: call._id.toString(),
+        chatId: buildChatId(from, to),
+        from,
+        to,
+        offer,
+        callType
+      };
       const receiverSocketId = getUserSocketId(to);
 
       if (receiverSocketId) {
-        io.to(receiverSocketId).emit("incoming_call", payload);
+        io.to(receiverSocketId).emit("incomingCall", payload);
       }
 
-      io.to(`user:${to}`).emit("incoming_call", payload);
+      io.to(`user:${to}`).emit("incomingCall", payload);
+      socket.emit("calling", payload);
     });
 
-    socket.on("answer_call", ({ from, to, answer } = {}) => {
-      if (!to || !answer) {
+    socket.on("acceptCall", async ({ callId, from, to, answer } = {}) => {
+      if (!to || !answer || !callId) {
         return;
       }
 
+      await Call.findByIdAndUpdate(callId, {
+        status: CALL_STATUS.ACCEPTED
+      });
+
       const payload = {
+        callId,
         from: from || socketUsers.get(socket.id),
         to,
         answer
@@ -130,27 +189,79 @@ async function bootstrap() {
       const receiverSocketId = getUserSocketId(to);
 
       if (receiverSocketId) {
-        io.to(receiverSocketId).emit("call_accepted", payload);
+        io.to(receiverSocketId).emit("callAccepted", payload);
       }
 
-      io.to(`user:${to}`).emit("call_accepted", payload);
+      io.to(`user:${to}`).emit("callAccepted", payload);
     });
 
-    socket.on("end_call", ({ from, to } = {}) => {
+    socket.on("rejectCall", async ({ callId, from, to } = {}) => {
+      if (!callId || !to) {
+        return;
+      }
+
+      await Call.findByIdAndUpdate(callId, {
+        status: CALL_STATUS.REJECTED
+      });
+
+      const payload = {
+        callId,
+        from: from || socketUsers.get(socket.id),
+        to
+      };
+
+      const receiverSocketId = getUserSocketId(to);
+
+      if (receiverSocketId) {
+        io.to(receiverSocketId).emit("callRejected", payload);
+      }
+
+      io.to(`user:${to}`).emit("callRejected", payload);
+      socket.emit("callRejected", payload);
+    });
+
+    socket.on("iceCandidate", ({ callId, from, to, candidate } = {}) => {
+      if (!callId || !to || !candidate) {
+        return;
+      }
+
+      const payload = {
+        callId,
+        from: from || socketUsers.get(socket.id),
+        to,
+        candidate
+      };
+
+      const receiverSocketId = getUserSocketId(to);
+
+      if (receiverSocketId) {
+        io.to(receiverSocketId).emit("iceCandidate", payload);
+      }
+
+      io.to(`user:${to}`).emit("iceCandidate", payload);
+    });
+
+    socket.on("endCall", async ({ callId, from, to } = {}) => {
       const callerId = from || socketUsers.get(socket.id);
-      const payload = { from: callerId, to };
+      const payload = { callId, from: callerId, to };
+
+      if (callId) {
+        await Call.findByIdAndUpdate(callId, {
+          status: CALL_STATUS.ENDED
+        });
+      }
 
       if (to) {
         const receiverSocketId = getUserSocketId(to);
 
         if (receiverSocketId) {
-          io.to(receiverSocketId).emit("call_ended", payload);
+          io.to(receiverSocketId).emit("callEnded", payload);
         }
 
-        io.to(`user:${to}`).emit("call_ended", payload);
+        io.to(`user:${to}`).emit("callEnded", payload);
       }
 
-      socket.emit("call_ended", payload);
+      socket.emit("callEnded", payload);
     });
 
     socket.on("disconnect", () => {
@@ -160,8 +271,8 @@ async function bootstrap() {
 
   app.set("io", io);
 
-  server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://192.168.0.175:${PORT}`);
   });
 }
 

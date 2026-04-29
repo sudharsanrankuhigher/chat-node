@@ -3,6 +3,10 @@ const Message = require("../models/Message");
 const ApiError = require("../utils/apiError");
 const { CONNECTION_STATUS, MESSAGE_TYPE } = require("../config/constants");
 
+function buildChatId(firstUserId, secondUserId) {
+  return [String(firstUserId), String(secondUserId)].sort().join("_");
+}
+
 async function ensureConnected(userId, otherUserId) {
   const connection = await Connection.findOne({
     status: CONNECTION_STATUS.ACCEPTED,
@@ -17,11 +21,50 @@ async function ensureConnected(userId, otherUserId) {
   }
 }
 
+async function getContacts(req, res) {
+  const connections = await Connection.find({
+    status: CONNECTION_STATUS.ACCEPTED,
+    $or: [{ sender: req.user._id }, { receiver: req.user._id }]
+  }).populate("sender receiver", "name mobile walletBalance createdAt updatedAt");
+
+  const data = connections.map((connection) => {
+    const otherUser =
+      String(connection.sender._id) === String(req.user._id)
+        ? connection.receiver
+        : connection.sender;
+
+    return {
+      _id: otherUser._id,
+      id: otherUser._id,
+      name: otherUser.name,
+      phone: otherUser.mobile,
+      mobile: otherUser.mobile,
+      chatId: buildChatId(req.user._id, otherUser._id),
+      walletBalance: otherUser.walletBalance
+    };
+  });
+
+  res.json({
+    success: true,
+    data
+  });
+}
+
 async function sendMessage(req, res) {
-  const { receiverId, message, type = MESSAGE_TYPE.TEXT, file = null } = req.body;
+  const {
+    senderId,
+    receiverId,
+    message,
+    type = MESSAGE_TYPE.TEXT,
+    file = null
+  } = req.body;
 
   if (!receiverId) {
     throw new ApiError(422, "receiverId is required.");
+  }
+
+  if (senderId && String(senderId) !== String(req.user._id)) {
+    throw new ApiError(403, "senderId does not match the authenticated user.");
   }
 
   if (!Object.values(MESSAGE_TYPE).includes(type)) {
@@ -38,9 +81,11 @@ async function sendMessage(req, res) {
 
   await ensureConnected(req.user._id, receiverId);
 
+  const chatId = buildChatId(req.user._id, receiverId);
   const createdMessage = await Message.create({
     sender: req.user._id,
     receiver: receiverId,
+    chatId,
     message: message || null,
     type,
     file
@@ -49,7 +94,9 @@ async function sendMessage(req, res) {
   await createdMessage.populate("sender receiver", "name mobile");
 
   const io = req.app.get("io");
+  io.to(`user:${receiverId}`).emit("receive_message", createdMessage);
   io.to(`user:${receiverId}`).emit("message:received", createdMessage);
+  io.to(`user:${req.user._id}`).emit("message:sent", createdMessage);
 
   res.status(201).json({
     success: true,
@@ -58,17 +105,29 @@ async function sendMessage(req, res) {
   });
 }
 
-async function getChatHistory(req, res) {
-  const { userId } = req.params;
+async function getMessages(req, res) {
+  const { chatId } = req.params;
 
-  await ensureConnected(req.user._id, userId);
+  if (!chatId) {
+    throw new ApiError(422, "chatId is required.");
+  }
 
-  const messages = await Message.find({
-    $or: [
-      { sender: req.user._id, receiver: userId },
-      { sender: userId, receiver: req.user._id }
-    ]
-  })
+  const participants = String(chatId).split("_");
+
+  if (
+    participants.length !== 2 ||
+    !participants.includes(String(req.user._id))
+  ) {
+    throw new ApiError(403, "Invalid chatId for the authenticated user.");
+  }
+
+  const otherUserId = participants.find(
+    (participant) => participant !== String(req.user._id)
+  );
+
+  await ensureConnected(req.user._id, otherUserId);
+
+  const messages = await Message.find({ chatId })
     .populate("sender receiver", "name mobile")
     .sort({ createdAt: 1 });
 
@@ -79,7 +138,9 @@ async function getChatHistory(req, res) {
 }
 
 module.exports = {
+  buildChatId,
+  getContacts,
   sendMessage,
-  getChatHistory,
+  getMessages,
   ensureConnected
 };

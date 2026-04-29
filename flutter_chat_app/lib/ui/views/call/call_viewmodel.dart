@@ -3,25 +3,28 @@ import 'dart:async';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:stacked/stacked.dart';
 
-import '../app/app.locator.dart';
-import '../models/call_signal.dart';
-import '../models/call_state.dart';
-import '../models/ice_candidate_model.dart';
-import '../services/call_service.dart';
-import '../services/socket_service.dart';
+import '../../../core/models/call_signal.dart';
+import '../../../core/models/call_state.dart';
+import '../../../core/models/ice_candidate_model.dart';
+import '../../../core/models/user_profile.dart';
+import '../../../core/services/call_service.dart';
+import '../../../core/services/socket_service.dart';
+import '../../../app/app.locator.dart';
 
 class CallViewModel extends ReactiveViewModel {
   CallViewModel({
-    required this.currentUserId,
-    required this.peerUserId,
+    required this.currentUser,
+    required this.peerUser,
     required this.isIncoming,
+    required this.isVideoCall,
     this.remoteOffer,
     this.autoStart = false,
   });
 
-  final String currentUserId;
-  final String peerUserId;
+  final UserProfile currentUser;
+  final UserProfile peerUser;
   final bool isIncoming;
+  final bool isVideoCall;
   final bool autoStart;
   final Map<String, dynamic>? remoteOffer;
 
@@ -29,8 +32,8 @@ class CallViewModel extends ReactiveViewModel {
   final CallService _callService = locator<CallService>();
 
   StreamSubscription<CallSignal>? _acceptedSubscription;
-  StreamSubscription<dynamic>? _endSubscription;
-  StreamSubscription<dynamic>? _iceSubscription;
+  StreamSubscription<Map<String, dynamic>>? _endSubscription;
+  StreamSubscription<IceCandidateModel>? _iceSubscription;
   bool _initialized = false;
   bool _callStarted = false;
   bool _shouldClose = false;
@@ -55,8 +58,9 @@ class CallViewModel extends ReactiveViewModel {
     setBusy(true);
 
     await _callService.prepareForCall(
-      currentUserId: currentUserId,
-      peerUserId: peerUserId,
+      currentUserId: currentUser.id,
+      peerUserId: peerUser.id,
+      videoEnabled: isVideoCall,
     );
 
     if (isIncoming) {
@@ -65,7 +69,7 @@ class CallViewModel extends ReactiveViewModel {
 
     _acceptedSubscription =
         _socketService.acceptedCalls.listen((CallSignal signal) async {
-      if (signal.from != peerUserId && signal.to != peerUserId) {
+      if (signal.from != peerUser.id || signal.to != currentUser.id) {
         return;
       }
 
@@ -75,7 +79,10 @@ class CallViewModel extends ReactiveViewModel {
 
     _iceSubscription =
         _socketService.iceCandidates.listen((IceCandidateModel signal) async {
-      if (signal.from != peerUserId && signal.to != peerUserId) {
+      final bool isCurrentCall =
+          (signal.from == peerUser.id && signal.to == currentUser.id) ||
+          (signal.from == currentUser.id && signal.to == peerUser.id);
+      if (!isCurrentCall) {
         return;
       }
 
@@ -83,13 +90,12 @@ class CallViewModel extends ReactiveViewModel {
       notifyListeners();
     });
 
-    _endSubscription = _socketService.callEnded.listen((dynamic payload) async {
+    _endSubscription = _socketService.callEnded.listen((Map<String, dynamic> payload) async {
       final String from = (payload['from'] ?? '').toString();
       final String to = (payload['to'] ?? '').toString();
-
       final bool isCurrentCall =
-          (from == peerUserId && to == currentUserId) ||
-          (from == currentUserId && to == peerUserId);
+          (from == peerUser.id && to == currentUser.id) ||
+          (from == currentUser.id && to == peerUser.id);
 
       if (!isCurrentCall) {
         return;
@@ -114,7 +120,12 @@ class CallViewModel extends ReactiveViewModel {
 
     _callStarted = true;
     final Map<String, dynamic> offer = await _callService.createOffer();
-    _socketService.callUser(from: currentUserId, to: peerUserId, offer: offer);
+    _socketService.callUser(
+      from: currentUser.id,
+      to: peerUser.id,
+      offer: offer,
+      callType: isVideoCall ? 'video' : 'audio',
+    );
     notifyListeners();
   }
 
@@ -124,19 +135,23 @@ class CallViewModel extends ReactiveViewModel {
     }
 
     final Map<String, dynamic> answer = await _callService.acceptOffer(remoteOffer!);
-    _socketService.answerCall(from: currentUserId, to: peerUserId, answer: answer);
+    _socketService.answerCall(
+      from: currentUser.id,
+      to: peerUser.id,
+      answer: answer,
+    );
     notifyListeners();
   }
 
   Future<void> rejectCall() async {
-    _socketService.endCall(from: currentUserId, to: peerUserId);
+    _socketService.endCall(from: currentUser.id, to: peerUser.id);
     _shouldClose = true;
     await _callService.endCurrentCall();
     notifyListeners();
   }
 
   Future<void> endCall() async {
-    _socketService.endCall(from: currentUserId, to: peerUserId);
+    _socketService.endCall(from: currentUser.id, to: peerUser.id);
     _shouldClose = true;
     await _callService.endCurrentCall();
     notifyListeners();
